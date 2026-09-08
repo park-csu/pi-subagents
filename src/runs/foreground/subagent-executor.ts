@@ -22,7 +22,6 @@ import { resolveExecutionAgentScope } from "../../agents/agent-scope.ts";
 import { handleManagementAction } from "../../agents/agent-management.ts";
 import { handleRefinementAction } from "../../agents/agent-refinements.ts";
 import { buildDoctorReport } from "../../extension/doctor.ts";
-import { readSubagentGuide } from "../../extension/subagent-guide.ts";
 import { normalizePublicSubagentExecution, validateWorkflowCapacityOverrides } from "../../extension/public-execution.ts";
 import { runSync } from "./execution.ts";
 import { handleWatchdogToolAction, WATCHDOG_TOOL_ACTIONS } from "../../watchdog/tool-actions.ts";
@@ -5984,7 +5983,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					? normalizeParentModel(ctx.model)
 					: rememberParentModel(deps.state, requestSessionId, ctx.model);
 		} catch (error) {
-			if (action?.toLowerCase() !== "doctor" && action?.toLowerCase() !== "guide") throw error;
+			if (action?.toLowerCase() !== "doctor") throw error;
 			requestParentModel = normalizeParentModel(ctx.model);
 		}
 		if (action) {
@@ -6220,20 +6219,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					...(granted.error ? { isError: true } : {}),
 					details: { mode: "management", results: [], spawnBudget: granted.snapshot },
 				};
-			}
-			if (action === "guide") {
-				try {
-					return {
-						content: [{ type: "text", text: readSubagentGuide(paramsWithResolvedCwd.topic) }],
-						details: { mode: "management", results: [] },
-					};
-				} catch (error) {
-					return {
-						content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
-						isError: true,
-						details: { mode: "management", results: [] },
-					};
-				}
 			}
 			if (action === "children.list") {
 				deps.state.currentSessionId = resolveCurrentSessionId(ctx.sessionManager);

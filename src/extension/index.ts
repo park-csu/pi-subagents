@@ -18,7 +18,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { keyText, type ExtensionAPI, type ExtensionContext, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Spacer, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
+import { Text, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import { clearAgentDiscoveryCache, discoverAgentSnapshot, discoverAgents, type AgentConfig, type AgentScope } from "../agents/agents.ts";
 import { appendAdvertisedAgentPrompt, buildAdvertisedAgentPrompt } from "../agents/advertised-agent-prompt.ts";
 import { clearRuntimeAgentsForPi, listRuntimeAgentConfigs, mergeRuntimeAgents } from "../agents/runtime-agent-registry.ts";
@@ -42,10 +42,8 @@ import { ASYNC_RETENTION_DELAY_MS, cleanupAsyncRetention } from "../runs/backgro
 import { createResultWatcher } from "../runs/background/result-watcher.ts";
 import { createResultDeliveryOwnership } from "../runs/background/result-delivery-ownership.ts";
 import { createScheduledRunManager } from "../runs/background/scheduled-runs.ts";
-import { registerSlashCommands } from "../slash/slash-commands.ts";
 import { registerPromptTemplateDelegationBridge } from "../slash/prompt-template-bridge.ts";
 import { registerMainWatchdog } from "../watchdog/register-main.ts";
-import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import {
 	renderSupervisorReply,
@@ -59,7 +57,6 @@ import { hasLiveSubagentWork, registerPiWebSessionLiveness } from "../integratio
 import { createRetainedNestedRouteTracker } from "../runs/background/retained-nested-route-tracker.ts";
 import { listHerdrProjectPaneRoots, restoreHerdrProjectPaneSnapshots } from "../inspectors/herdr/project-panes.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
-import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { createWaitSubscriptionManager } from "../runs/background/wait-subscriptions.ts";
@@ -80,12 +77,9 @@ import { resolveMissionStoreLocation } from "../missions/store.ts";
 import { listRetainedChildren } from "../runs/background/retained-children.ts";
 import {
 	type Details,
-	type MainWindowRendererConfig,
 	type SubagentState,
 	DIRS,
 	DEFAULT_ARTIFACT_CONFIG,
-	SLASH_RESULT_TYPE,
-	SLASH_TEXT_RESULT_TYPE,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
 	SUBAGENT_PROCESS_TERMINAL_EVENT,
@@ -302,52 +296,6 @@ function getSubagentSessionRoot(parentSessionFile: string | null): string {
 
 function expandTilde(p: string): string {
 	return p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p;
-}
-
-function isSlashResultRunning(result: { details?: Details }): boolean {
-	return result.details?.progress?.some((entry) => entry.status === "running")
-		|| result.details?.results.some((entry) => entry.progress?.status === "running")
-		|| false;
-}
-
-function isSlashResultError(result: { details?: Details }): boolean {
-	return result.details?.results.some((entry) => entry.exitCode !== 0 && entry.progress?.status !== "running") || false;
-}
-
-function rebuildSlashResultContainer(
-	container: Container,
-	result: AgentToolResult<Details>,
-	options: { expanded: boolean },
-	theme: ExtensionContext["ui"]["theme"],
-	rendererConfig?: MainWindowRendererConfig,
-	foregroundDetachShortcut?: string,
-): void {
-	container.clear();
-	container.addChild(new Spacer(1));
-	const boxTheme = isSlashResultRunning(result) ? "toolPendingBg" : isSlashResultError(result) ? "toolErrorBg" : "toolSuccessBg";
-	const box = new Box(1, 1, (text: string) => theme.bg(boxTheme, text));
-	box.addChild(renderSubagentResult(result, options, theme, undefined, rendererConfig, foregroundDetachShortcut));
-	container.addChild(box);
-}
-
-function createSlashResultComponent(
-	details: SlashMessageDetails,
-	options: { expanded: boolean },
-	theme: ExtensionContext["ui"]["theme"],
-	rendererConfig?: MainWindowRendererConfig,
-	foregroundDetachShortcut?: string,
-): Container {
-	const container = new Container();
-	let lastVersion = -1;
-	container.render = (width: number): string[] => {
-		const snapshot = getSlashRenderableSnapshot(details);
-		if (snapshot.version !== lastVersion || isSlashResultRunning(snapshot.result)) {
-			lastVersion = snapshot.version;
-			rebuildSlashResultContainer(container, snapshot.result, options, theme, rendererConfig, foregroundDetachShortcut);
-		}
-		return Container.prototype.render.call(container, width);
-	};
-	return container;
 }
 
 class SubagentControlNoticeComponent implements Component {
@@ -645,22 +593,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		registerEntryRenderer.call(pi, SUPERVISOR_REPLY_ENTRY_TYPE, renderSupervisorReply);
 	}
 
-	pi.registerMessageRenderer<SlashMessageDetails>(SLASH_RESULT_TYPE, (message, options, theme) => {
-		const details = resolveSlashMessageDetails(message.details);
-		if (!details) return undefined;
-		return createSlashResultComponent(details, options, theme, config.mainWindowRenderer, config.foregroundDetachShortcut);
-	});
-
-	pi.registerMessageRenderer<undefined>(SLASH_TEXT_RESULT_TYPE, (message, _options, _theme) => {
-		const content = typeof message.content === "string"
-			? message.content
-			: message.content
-				.filter((entry) => entry.type === "text")
-				.map((entry) => entry.text)
-				.join("\n");
-		return new Text(content, 0, 0);
-	});
-
 	pi.registerMessageRenderer<SubagentNotifyDetails>("subagent-notify", (message, options, theme) => {
 		const content = typeof message.content === "string" ? message.content : "";
 		const details = (message.details as SubagentNotifyDetails | undefined) ?? parseSubagentNotifyContent(content);
@@ -719,14 +651,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		return executor.executePublic(id, params, signal, onUpdate, ctx);
 	};
 
-	const slashBridge = registerSlashSubagentBridge({
-		events: pi.events,
-		getContext: () => state.lastUiContext,
-		execute: (id, params, signal, onUpdate, ctx) =>
-			executeSubagentCollapsed(id, params, signal, onUpdate, ctx),
-	});
-
-	const promptTemplateBridge = registerPromptTemplateDelegationBridge({
+	const delegationBridge = registerPromptTemplateDelegationBridge({
 		events: pi.events,
 		getContext: () => state.lastUiContext,
 		execute: (requestId, params, signal, ctx, onUpdate) =>
@@ -830,11 +755,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		} catch (error) {
 			console.error("Failed to evaluate goal missions:", error);
 		}
-	});
-
-	const disposeSlashCommands = registerSlashCommands(pi, state, {
-		fleetKeybindings: config.fleetKeybindings,
-		foregroundDetachShortcut: config.foregroundDetachShortcut,
 	});
 
 	let visibleControlNotices = new Set<string>();
@@ -997,9 +917,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		scheduledRunManager.bindSession(ctx);
 		logSlowPhase("scheduled-runs", phaseStartedAt);
 		phaseStartedAt = Date.now();
-		restoreSlashFinalSnapshots(ctx.sessionManager.getEntries());
-		logSlowPhase("slash-snapshots", phaseStartedAt);
-		phaseStartedAt = Date.now();
 		waitSubscriptionManager.restore();
 		logSlowPhase("wait-subscriptions", phaseStartedAt);
 		phaseStartedAt = Date.now();
@@ -1054,11 +971,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 					// Best effort cleanup during shutdown or reload.
 				}
 			}
-			disposeSlashCommands.dispose();
-			slashBridge.cancelAll();
-			slashBridge.dispose();
-			promptTemplateBridge.cancelAll();
-			promptTemplateBridge.dispose();
+			delegationBridge.cancelAll();
+			delegationBridge.dispose();
 			state.widgetsSuspended = false;
 			state.currentSessionId = null;
 			state.supervisorOwnerSessionId = null;
@@ -1072,7 +986,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 				runtimeRegistry.bySessionManager.delete(runtimeEntry.sessionManager);
 			}
 			runtimeRegistry.activeEntries.delete(runtimeEntry);
-			if (runtimeRegistry.activeEntries.size === 0) clearSlashSnapshots();
 			try {
 				if (state.lastUiContext?.hasUI) state.lastUiContext.ui.setWidget(WIDGET_KEY, undefined);
 			} catch (error) {

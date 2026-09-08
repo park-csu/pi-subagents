@@ -446,44 +446,6 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("uses configured main-window renderer density for slash results", () => {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-slash-renderer-density-config-"));
-		try {
-			const configDir = path.join(agentDir, "extensions", "subagent");
-			fs.mkdirSync(configDir, { recursive: true });
-			fs.writeFileSync(path.join(configDir, "config.json"), JSON.stringify({ mainWindowRenderer: { horizontalSpacing: 0, compactResultMaxLines: 3 } }), "utf-8");
-
-			const script = String.raw`
-				import registerSubagentExtension from "./index.ts";
-				const events = { on() { return () => {}; }, emit() {} };
-				let slashRenderer;
-				const fakePi = new Proxy({
-					events,
-					registerTool() {}, registerCommand() {}, registerShortcut() {}, sendMessage() {}, getSessionName() {},
-					registerMessageRenderer(type, renderer) { if (type === "subagent-slash-result") slashRenderer = renderer; },
-				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
-				registerSubagentExtension(fakePi);
-				if (!slashRenderer) throw new Error("slash renderer not registered");
-				const result = slashRenderer({ details: {
-					requestId: "slash-density",
-					result: { content: [{ type: "text", text: "done" }], details: { mode: "parallel", results: [
-						{ agent: "scout", task: "a", exitCode: 0, messages: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
-						{ agent: "reviewer", task: "b", exitCode: 0, messages: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
-						{ agent: "writer", task: "c", exitCode: 0, messages: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 } },
-					] } },
-				} }, { expanded: false }, { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } });
-				const lines = result.render(120);
-				if (lines.length !== 6) throw new Error("expected outer spacer, box rows, and three capped result rows: " + JSON.stringify(lines));
-				if (!lines[4].includes("rows hidden")) throw new Error("compact cap was not applied: " + JSON.stringify(lines));
-			`;
-			const env = parentToolEnv();
-			env.PI_CODING_AGENT_DIR = agentDir;
-			execFileSync(process.execPath, ["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script], { cwd: projectRoot, env, stdio: "pipe" });
-		} finally {
-			fs.rmSync(agentDir, { recursive: true, force: true });
-		}
-	});
-
 	it("registers bg_wait and honors waitTool disabled config", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-wait-tool-config-"));
 		try {
@@ -827,55 +789,6 @@ describe("subagent extension child mode", () => {
 		);
 	});
 
-	it("keeps slash snapshots until the last independent runtime shuts down", () => {
-		const script = String.raw`
-			import registerSubagentExtension from "./index.ts";
-			import { buildSlashInitialResult, getSlashRenderableSnapshot } from "./src/slash/slash-live-state.ts";
-			function createRuntime(sessionId) {
-				const handlers = new Map();
-				const events = { on() { return () => {}; }, emit() {} };
-				const pi = new Proxy({
-					events,
-					on(channel, handler) { handlers.set(channel, [...(handlers.get(channel) ?? []), handler]); },
-					registerTool() {}, registerCommand() {}, registerShortcut() {}, registerMessageRenderer() {},
-					sendMessage() {}, getSessionName() { return undefined; },
-				}, { get(target, prop) { return prop in target ? target[prop] : () => undefined; } });
-				const ctx = {
-					cwd: process.cwd(), hasUI: false,
-					ui: { setWidget() {}, requestRender() {}, theme: { fg(_name, text) { return text; }, bg(_name, text) { return text; }, bold(text) { return text; } } },
-					sessionManager: { getSessionId() { return sessionId; }, getSessionFile() { return null; }, getEntries() { return []; } },
-					modelRegistry: { getAvailable() { return []; } },
-				};
-				return { pi, handlers, ctx };
-			}
-
-			const first = createRuntime("slash-first");
-			const second = createRuntime("slash-second");
-			registerSubagentExtension(first.pi);
-			for (const handler of first.handlers.get("session_start")) await handler({ reason: "startup" }, first.ctx);
-			registerSubagentExtension(second.pi);
-			for (const handler of second.handlers.get("session_start")) await handler({ reason: "startup" }, second.ctx);
-			const details = buildSlashInitialResult("slash-isolation", { agent: "worker", task: "Keep this snapshot" });
-			const liveVersion = getSlashRenderableSnapshot(details).version;
-			if (liveVersion <= 0) throw new Error("slash snapshot was not populated");
-
-			for (const handler of first.handlers.get("session_shutdown")) await handler({ reason: "shutdown" });
-			if (getSlashRenderableSnapshot(details).version !== liveVersion) {
-				throw new Error("one runtime shutdown cleared another active runtime's slash snapshot");
-			}
-			for (const handler of second.handlers.get("session_shutdown")) await handler({ reason: "shutdown" });
-			if (getSlashRenderableSnapshot(details).version !== 0) {
-				throw new Error("last runtime shutdown did not clear slash snapshots");
-			}
-		`;
-
-		execFileSync(
-			process.execPath,
-			["--experimental-strip-types", "--import", "./test/support/register-loader.mjs", "--input-type=module", "--eval", script],
-			{ cwd: projectRoot, env: parentToolEnv(), stdio: "pipe" },
-		);
-	});
-
 	it("disposes pending completion notifications on session shutdown", () => {
 		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-notify-shutdown-"));
 		const configDir = path.join(agentDir, "extensions", "subagent");
@@ -1163,7 +1076,7 @@ describe("subagent extension child mode", () => {
 		}
 	});
 
-	it("registers the main watchdog command and renderer in parent mode", () => {
+	it("registers framework renderers without custom commands in parent mode", () => {
 		const script = String.raw`
 			import registerSubagentExtension from "./index.ts";
 			const events = { on() { return () => {}; }, emit() {} };
@@ -1186,7 +1099,7 @@ describe("subagent extension child mode", () => {
 				},
 			});
 			registerSubagentExtension(fakePi);
-			if (!commands.includes("subagents-watchdog")) throw new Error("watchdog command not registered: " + commands.join(", "));
+			if (commands.length !== 0) throw new Error("custom commands registered: " + commands.join(", "));
 			if (!renderers.includes("subagent_watchdog_warning")) throw new Error("watchdog renderer not registered: " + renderers.join(", "));
 			if (!renderers.includes("subagent_supervisor_request")) throw new Error("supervisor request renderer not registered: " + renderers.join(", "));
 			if (!entryRenderers.includes("subagent_supervisor_reply")) throw new Error("supervisor reply entry renderer not registered: " + entryRenderers.join(", "));

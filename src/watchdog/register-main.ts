@@ -1,17 +1,14 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
-import { SLASH_TEXT_RESULT_TYPE } from "../shared/types.ts";
+import { resolveEffectiveThinking, splitKnownThinkingSuffix } from "../shared/model-info.ts";
 import { captureWatchdogDiffBaseline, type WatchdogDiffBaseline } from "./diff-tool.ts";
-import { recommendStrongWatchdogModel, resolveWatchdogModelInput, parseWatchdogThinkingInput } from "./model-selection.ts";
+import { recommendStrongWatchdogModel } from "./model-selection.ts";
 import { renderWatchdogWarning } from "./render.ts";
 import { createMainWatchdogReview } from "./review.ts";
 import { MainWatchdogRuntime, type WatchdogReviewFunction } from "./runtime.ts";
-import { getWatchdogUserSettingsPath, writeUserWatchdogEnabled, writeWatchdogModelSettings } from "./settings.ts";
 import {
 	SUBAGENT_WATCHDOG_WARNING_TYPE,
 	type WatchdogRuntimeStatus,
-	type WatchdogWarning,
 	type WatchdogWarningDetails,
 } from "./types.ts";
 import { createWatchdogWarningMessage } from "./warning-format.ts";
@@ -19,10 +16,6 @@ import { createWatchdogWarningMessage } from "./warning-format.ts";
 interface RegisterMainWatchdogOptions {
 	runtime?: MainWatchdogRuntime;
 	review?: WatchdogReviewFunction;
-}
-
-function sendSlashText(pi: ExtensionAPI, text: string): void {
-	pi.sendMessage({ customType: SLASH_TEXT_RESULT_TYPE, content: text, display: true });
 }
 
 function messageFromError(error: unknown): string {
@@ -140,241 +133,8 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 	} else {
 		lines.push("", "Config: ok");
 	}
-	lines.push(
-		"Sources:",
-		...snapshot.sources.map(sourceLine),
-		"",
-		"Model commands:",
-		"- /subagents-watchdog recommend-model",
-		"- /subagents-watchdog model recommended",
-		"- /subagents-watchdog model <provider/model[:thinking]>",
-		"- /subagents-watchdog model inherit",
-		"- /subagents-watchdog session model recommended",
-		"Agent action: subagent({ action: \"watchdog.configure\", model: \"recommended\", scope: \"session\" })",
-	);
+	lines.push("Sources:", ...snapshot.sources.map(sourceLine));
 	return lines.join("\n");
-}
-
-function parseTestCommand(input: string): { severity: "concern" | "blocker"; text: string } | undefined {
-	const match = input.match(/^test\s+(concern|blocker)\s+([\s\S]+)$/);
-	if (!match) return undefined;
-	return { severity: match[1] as "concern" | "blocker", text: match[2]!.trim() };
-}
-
-function formatThinking(value: ThinkingLevel | false | undefined): string {
-	if (value === undefined) return "inherit";
-	return value === false ? "off" : value;
-}
-
-function parseThinkingCommand(raw: string): ThinkingLevel | false | null {
-	const value = raw.trim();
-	if (value === "inherit") return null;
-	return parseWatchdogThinkingInput(value, "/subagents-watchdog thinking") ?? null;
-}
-
-function resolveModelCommandValue(ctx: ExtensionCommandContext, raw: string): { model: string | null; thinking: ThinkingLevel | false | null; description: string } {
-	const value = raw.trim();
-	if (!value) throw new Error("Expected a model, 'recommended', or 'inherit'.");
-	if (value === "inherit") return { model: null, thinking: null, description: "current session model and thinking" };
-	if (value === "recommended") {
-		const recommendation = recommendStrongWatchdogModel(ctx as ExtensionContext);
-		return {
-			model: recommendation.model,
-			thinking: recommendation.thinking,
-			description: `${recommendation.model}:${recommendation.thinking} (${recommendation.label})`,
-		};
-	}
-	const resolved = resolveWatchdogModelInput(ctx as ExtensionContext, value);
-	return {
-		model: resolved.model,
-		thinking: resolved.thinking ?? null,
-		description: `${resolved.model}${resolved.thinking ? `:${resolved.thinking}` : ""}`,
-	};
-}
-
-function buildRecommendationText(ctx: ExtensionCommandContext): string {
-	const recommendation = recommendStrongWatchdogModel(ctx as ExtensionContext);
-	return [
-		"Subagent watchdog recommended model",
-		`Current session: ${currentSessionModelLine(ctx as ExtensionContext)}`,
-		`Recommended: ${recommendation.model}:${recommendation.thinking}`,
-		`Reason: ${recommendation.reason}`,
-		"",
-		"Apply for this session:",
-		"/subagents-watchdog session model recommended",
-		"",
-		"Save as your user default:",
-		"/subagents-watchdog model recommended",
-	].join("\n");
-}
-
-function buildCheckText(runtime: MainWatchdogRuntime, ctx: ExtensionCommandContext): string {
-	const snapshot = runtime.getSnapshot(ctx.cwd);
-	if (!snapshot.configOk) {
-		return ["Subagent watchdog config check", "", "Config errors:", ...snapshot.errors.map((error) => `- ${error.message}`)].join("\n");
-	}
-	const lines = ["Subagent watchdog config check", "", "Config: ok"];
-	if (snapshot.config.main.model) {
-		const resolved = resolveWatchdogModelInput(ctx as ExtensionContext, snapshot.config.main.model);
-		lines.push(`Main model: ${resolved.model} auth ok`);
-	} else {
-		lines.push(`Main model: ${currentSessionModelLine(ctx as ExtensionContext)}`);
-	}
-	lines.push(`Main thinking: ${mainThinkingLine(snapshot, ctx as ExtensionContext)}`);
-	lines.push(lspLine(snapshot));
-	try {
-		const recommendation = recommendStrongWatchdogModel(ctx as ExtensionContext);
-		lines.push(`Recommended strong watchdog: ${recommendation.model}:${recommendation.thinking}`);
-	} catch (error) {
-		lines.push(`Recommended strong watchdog: unavailable (${messageFromError(error)})`);
-	}
-	return lines.join("\n");
-}
-
-function createTestWarning(severity: "concern" | "blocker", text: string): WatchdogWarning {
-	return {
-		severity,
-		category: "other",
-		confidence: "high",
-		source: "main",
-		state: "displayed",
-		summary: text,
-		evidence: `Manual /subagents-watchdog test ${severity} message from the main session.`,
-		recommendedAction: severity === "blocker"
-			? "Verify the renderer and transcript delivery."
-			: "Verify the renderer and transcript delivery; decide manually whether any action is needed.",
-	};
-}
-
-async function handleWatchdogCommand(
-	pi: ExtensionAPI,
-	runtime: MainWatchdogRuntime,
-	args: string,
-	ctx: ExtensionCommandContext,
-): Promise<void> {
-	const input = args.trim();
-	if (!input || input === "status") {
-		sendSlashText(pi, buildWatchdogStatus(runtime.getSnapshot(ctx.cwd), ctx));
-		return;
-	}
-	if (input === "recommend-model") {
-		try {
-			sendSlashText(pi, buildRecommendationText(ctx));
-		} catch (error) {
-			sendSlashText(pi, `Subagent watchdog recommended model\n\n${messageFromError(error)}`);
-		}
-		return;
-	}
-	if (input === "check") {
-		try {
-			sendSlashText(pi, buildCheckText(runtime, ctx));
-		} catch (error) {
-			sendSlashText(pi, `Subagent watchdog config check\n\n${messageFromError(error)}`);
-		}
-		return;
-	}
-	if (input === "on" || input === "off") {
-		const enabled = input === "on";
-		try {
-			const settingsPath = writeUserWatchdogEnabled(enabled);
-			const snapshot = runtime.getSnapshot(ctx.cwd);
-			sendSlashText(pi, [
-				`Subagent watchdog ${boolLabel(enabled)} saved to user settings.`,
-				`Updated: ${settingsPath}`,
-				`Main now: ${boolLabel(snapshot.enabled)}${snapshot.sessionOverride !== undefined ? ` (session override ${boolLabel(snapshot.sessionOverride)})` : ""}`,
-			].join("\n"));
-		} catch (error) {
-			sendSlashText(pi, `Subagent watchdog\n\nCould not update ${getWatchdogUserSettingsPath()}: ${messageFromError(error)}`);
-		}
-		return;
-	}
-	if (input === "session on" || input === "session off") {
-		const enabled = input.endsWith("on");
-		const snapshot = runtime.setSessionEnabled(enabled, ctx.cwd);
-		sendSlashText(pi, [
-			`Subagent watchdog session override: ${boolLabel(enabled)}.`,
-			"No settings files were changed.",
-			"",
-			buildWatchdogStatus(snapshot, ctx),
-		].join("\n"));
-		return;
-	}
-	if (input.startsWith("session model ")) {
-		const rawModel = input.slice("session model ".length);
-		try {
-			const value = resolveModelCommandValue(ctx, rawModel);
-			const snapshot = value.model === null
-				? runtime.clearSessionModel(ctx.cwd)
-				: runtime.setSessionModel({ model: value.model, thinking: value.thinking ?? null }, ctx.cwd);
-			sendSlashText(pi, [
-				`Subagent watchdog session model: ${value.description}.`,
-				"No settings files were changed.",
-				"",
-				buildWatchdogStatus(snapshot, ctx),
-			].join("\n"));
-		} catch (error) {
-			sendSlashText(pi, `Subagent watchdog session model\n\n${messageFromError(error)}`);
-		}
-		return;
-	}
-	if (input.startsWith("model ")) {
-		const rawModel = input.slice("model ".length);
-		try {
-			const value = resolveModelCommandValue(ctx, rawModel);
-			const settingsPath = writeWatchdogModelSettings({
-				scope: "user",
-				target: { kind: "main" },
-				model: value.model,
-				thinking: value.thinking,
-			});
-			runtime.refreshConfig(ctx.cwd);
-			const snapshot = runtime.getSnapshot(ctx.cwd);
-			sendSlashText(pi, [
-				`Subagent watchdog model saved: ${value.description}.`,
-				`Updated: ${settingsPath}`,
-				`Main now: ${boolLabel(snapshot.enabled)}`,
-				value.model === null ? "The watchdog now inherits the current session model and thinking." : "Run /subagents-watchdog on if the watchdog is still off.",
-				"",
-				buildWatchdogStatus(snapshot, ctx),
-			].join("\n"));
-		} catch (error) {
-			sendSlashText(pi, `Subagent watchdog model\n\n${messageFromError(error)}\nNo settings files were changed.`);
-		}
-		return;
-	}
-	if (input.startsWith("thinking ")) {
-		const rawThinking = input.slice("thinking ".length);
-		try {
-			const thinking = parseThinkingCommand(rawThinking);
-			const settingsPath = writeWatchdogModelSettings({
-				scope: "user",
-				target: { kind: "main" },
-				thinking,
-			});
-			runtime.refreshConfig(ctx.cwd);
-			sendSlashText(pi, [
-				`Subagent watchdog thinking saved: ${formatThinking(thinking ?? undefined)}.`,
-				`Updated: ${settingsPath}`,
-				"",
-				buildWatchdogStatus(runtime.getSnapshot(ctx.cwd), ctx),
-			].join("\n"));
-		} catch (error) {
-			sendSlashText(pi, `Subagent watchdog thinking\n\n${messageFromError(error)}\nNo settings files were changed.`);
-		}
-		return;
-	}
-	const test = parseTestCommand(input);
-	if (test) {
-		if (!test.text) {
-			ctx.ui.notify("Usage: /subagents-watchdog test concern|blocker <text>", "error");
-			return;
-		}
-		const warning = createTestWarning(test.severity, test.text);
-		const details = runtime.recordDisplayedWarning(warning);
-		pi.sendMessage(createWatchdogWarningMessage(details, { display: true, details }));
-		return;
-	}
-	ctx.ui.notify(`Usage: /subagents-watchdog [status|on|off|session on|session off|recommend-model|model recommended|model <provider/model[:thinking]>|model inherit|thinking ${THINKING_LEVELS.join("|")}|thinking inherit|session model recommended|check|test concern <text>|test blocker <text>]`, "error");
 }
 
 export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatchdogOptions = {}): MainWatchdogRuntime {
@@ -400,14 +160,6 @@ export function registerMainWatchdog(pi: ExtensionAPI, options: RegisterMainWatc
 			return new Text(content, 0, 0);
 		}
 		return renderWatchdogWarning(details, renderOptions, theme);
-	});
-
-	pi.registerCommand("subagents-watchdog", {
-		description: "Show or toggle the default-off subagent watchdog",
-		handler: (args, ctx) => {
-			rememberContext(ctx);
-			return handleWatchdogCommand(pi, runtime, args, ctx);
-		},
 	});
 
 	pi.on("session_start", (_event, ctx) => {

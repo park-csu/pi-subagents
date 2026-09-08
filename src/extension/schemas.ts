@@ -311,7 +311,6 @@ const SubagentParamProperties = {
 		description: "Optional status view. Use view='fleet' for a read-only active foreground/async fleet surface, or view='transcript' with id/dir (and optional index) to tail a run transcript.",
 	})),
 	lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 500, description: "Maximum transcript lines for action='status', view='transcript'. Defaults to 80." })),
-	topic: Type.Optional(Type.String()),
 	message: Type.Optional(Type.String({ description: "Follow-up message for resume, live guidance for steer, or optional startup prompt for project.open." })),
 	mode: Type.Optional(Type.String({ enum: ["steer", "follow_up", "auto", "plan", "apply"], description: "Delivery mode for action='steer', or plan/apply mode for worktree.cleanup. worktree.cleanup currently supports plan only; apply/removal is not available yet." })),
 	steeringRecovery: Type.Optional(Type.Boolean({ description: "For action='steer', allow pause-and-revive recovery after a missed acknowledgment. Defaults true for direct tool calls in steer mode; extension RPC steering forces false so callers retain exact child ownership." })),

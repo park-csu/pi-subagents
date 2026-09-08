@@ -23,11 +23,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-subagents.git"
+    "url": "git+https://github.com/park-csu/pi-subagents.git"
   },
-  "homepage": "https://github.com/nicobailon/pi-subagents#readme",
+  "homepage": "https://github.com/park-csu/pi-subagents#readme",
   "bugs": {
-    "url": "https://github.com/nicobailon/pi-subagents/issues"
+    "url": "https://github.com/park-csu/pi-subagents/issues"
   },
   "keywords": [
     "pi-package",
@@ -45,10 +45,6 @@
     "index.ts",
     "src/**/*.ts",
     "*.mjs",
-    "agents/",
-    "skills/**/*",
-    "prompts/**/*",
-    "docs/**/*",
     "README.md",
     "CHANGELOG.md"
   ],
@@ -62,12 +58,6 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
     ]
   },
   "peerDependencies": {
