@@ -49,7 +49,7 @@ test("sixteen global slots are atomic, released, and abort-aware", async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("default topology allows three direct parents and one child each", async () => {
+test("slot accounting supports an explicitly enabled nested topology", async () => {
   const root = await mkdtemp(join(tmpdir(), "subagent-topology-"));
   try {
     const pool = await createPool(root);

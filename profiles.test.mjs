@@ -20,7 +20,7 @@ function installedPi() {
 
 test("installed workflow profiles use one delegation level", async () => {
   const { parseFrontmatter } = await import(pathToFileURL(join(installedPi(), "dist/index.js")));
-  const roles = Object.fromEntries(["implementer", "scout", "researcher", "reviewer"].map(name => {
+  const roles = Object.fromEntries(["implementer", "scout", "researcher", "reviewer", "mermaid-maker", "svg-maker"].map(name => {
     const file = new URL(`../../subagents/${name}.md`, import.meta.url);
     const { frontmatter, body } = parseFrontmatter(readFileSync(file, "utf8"));
     return [name, validateDefinition(frontmatter, body, file.pathname)];
