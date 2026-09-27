@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { runChild } from "./core.ts";
-import { createPool } from "./limits.ts";
+import { createPool, DEFAULT_LIMITS } from "./limits.ts";
 
 test("actual Pi depth-zero and nested headless parents await results and restore sessions (no network)", {
   skip: spawnSync("which", ["pi"]).status !== 0, timeout: 65000,
@@ -19,6 +19,7 @@ test("actual Pi depth-zero and nested headless parents await results and restore
     process.env.PI_OFFLINE = "1";
     for (const name of Object.keys(process.env)) if (name.startsWith("PI_SUBAGENT_")) delete process.env[name];
     delete process.env.TMUX; delete process.env.TMUX_PANE;
+    await writeFile(join(root, "subagents.json"), '{"max_depth":2}');
     await mkdir(join(root, "subagents"));
     await writeFile(join(root, "subagents", "researcher.md"), `---
 name: researcher
@@ -37,6 +38,7 @@ Offline fixture only.
       agent: { name: "researcher", description: "Offline", model: "offline-worker/fixture",
         thinking: "off", callable: true, can_delegate: true, delegatable_agents: ["researcher"], tools: ["offline_marker"], systemPrompt: "Offline fixture only." },
       task: "Native async fixture", cwd: root, runsDir, pool: await createPool(runsDir),
+      limits: { ...DEFAULT_LIMITS, max_depth: 2 },
       extensionPath: fileURLToPath(new URL("./index.ts", import.meta.url)),
       toolExtensions: [fileURLToPath(new URL("./test-fixtures/offline-provider.ts", import.meta.url))],
       waitForSession: true,

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { startWorker } from "./core.ts";
 import { createWorkerRpc } from "./rpc.ts";
-import { createPool } from "./limits.ts";
+import { createPool, DEFAULT_LIMITS } from "./limits.ts";
 
 test("RPC controls wait for their own acknowledgement and reject errors, timeouts and exit", async () => {
   const wires = [];
@@ -93,6 +93,7 @@ for (const mode of ["async", "sync"]) test(`RPC routes controls to an owned desc
   process.env.PI_CODING_AGENT_DIR = root;
   let worker;
   try {
+    await writeFile(join(root, "subagents.json"), '{"max_depth":2}');
     await mkdir(join(root, "subagents"));
     await writeFile(join(root, "subagents/leaf.md"), `---
 name: leaf
@@ -112,6 +113,7 @@ Offline leaf fixture.
       agent: { name: "parent", description: "RPC", model: "rpc-fixture/model", thinking: "off",
         callable: true, can_delegate: true, delegatable_agents: ["leaf"], tools: ["hold_worker"], systemPrompt: "Offline fixture" },
       task: "Delegate and wait", cwd: root, runsDir, runId: randomUUID(), pool: await createPool(runsDir),
+      limits: { ...DEFAULT_LIMITS, max_depth: 2 },
       extensionPath: fileURLToPath(new URL("./index.ts", import.meta.url)),
       toolExtensions: [fileURLToPath(new URL("./test-fixtures/rpc-provider.ts", import.meta.url))],
       onDescendant: row => descendants.set(row.runId, row),
